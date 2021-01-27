@@ -50,7 +50,8 @@ class PubnubLink extends ApolloLink {
     request(operation) {
         return new Observable((observer) => {
             // argument observer is the 'graphqlSubscriptionObserver'
-            console.log('apollo link got graphql subscribe request: ',{ ...operation, query: print(operation.query)});
+            console.log('apollo link intercepted graphql subscribe request: ',{ ...operation, query: print(operation.query)});
+
 
             console.log('wire pubnub to apollo link');
             pubnub.addListener({
@@ -75,11 +76,18 @@ class PubnubLink extends ApolloLink {
                 }
             });
 
+            console.log("init pubnub subscription ");
+            pubnub.subscribe({
+                channels: ["hello_world"]// 'hello_world' channel info should be programmatically created
+            });
+
         });
     }
 }
 
 
+
+// Only standard apollo link used since here
 const client = new ApolloClient({
     link: new PubnubLink({}),
     cache: new InMemoryCache()
@@ -105,21 +113,15 @@ let graphqlSubscriptionObserver = {
 };
 
 console.log("fire graphql subscription");
-client
-.subscribe({
+client.subscribe({
     query: gql`
         subscription {
             newPeopleAdded {id name}
         }
     `
-  })
-  .subscribe(graphqlSubscriptionObserver);
+})
+.subscribe(graphqlSubscriptionObserver);
 
-
-console.log("init pubnub subscription ");
-pubnub.subscribe({
-    channels: ["hello_world"]
-});
 
 ReactDOM.render(
     <React.StrictMode>
