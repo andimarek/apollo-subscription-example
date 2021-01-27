@@ -4,80 +4,128 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import gql from "graphql-tag";
-import { createClient } from "graphql-ws";
-import { ApolloLink, Observable, ApolloClient, InMemoryCache } from '@apollo/client';
-import { print } from 'graphql';
+import {ApolloLink, Observable, ApolloClient, InMemoryCache} from '@apollo/client';
+import {print} from 'graphql';
+import PubNub from "pubnub";
 
-class WebSocketLink extends ApolloLink {
+// init a pubnub client
+const pubnub = new PubNub({
+    publishKey: "<>",
+    subscribeKey: "<>",
+    secretKey: "<>",
+    uuid: "russell-test1-myUniqueUUID",
+});
 
-  constructor(options) {
-    super();
-    this.client = createClient(options);
-  }
-
-  request(operation) {
-    return new Observable((sink) => {
-      console.log('subscribe: ',{ ...operation, query: print(operation.query)});
-      return this.client.subscribe(
-        { ...operation, query: print(operation.query) },
-        {
-          next: sink.next.bind(sink),
-          complete: sink.complete.bind(sink),
-          error: (err) => {
-            console.log('error: ', err);
-            if (err instanceof Error) {
-              sink.error(err);
-            } else if (err instanceof CloseEvent) {
-              sink.error(
-                new Error(
-                  `Socket closed with event ${err.code}` + err.reason
-                    ? `: ${err.reason}` // reason will be available on clean closes
-                    : '',
-                ),
-              );
-            } else {
-              sink.error(
-                new Error(
-                  err
-                    .map(({ message }) => message)
-                    .join(', '),
-                ),
-              );
-            }
-          },
+// publishing to pub nub channel
+async function publishSampleMessage() {
+    console.log(
+        "Since we're publishing on subscribe connectEvent, we're sure we'll receive the following publish."
+    );
+    const result = await pubnub.publish({
+        channel: "hello_world",
+        message: {
+            title: "greeting",
+            description: "hello world!",
         },
-      );
     });
-  }
+    console.log("published  at " + result.timetoken);
+
+    const result2 = await pubnub.publish({
+        channel: "hello_world",
+        message: {
+            title: "greeting2",
+            description: "hello world2!",
+        },
+    });
+    console.log("published  at " + result2.timetoken);
 }
 
-const wsLink = new WebSocketLink({
-  url: 'ws://localhost:8080/graphql/websocket'
-});
+
+class PubnubLink extends ApolloLink {
+
+    constructor(options) {
+        super();
+    }
+
+    request(operation) {
+        return new Observable((observer) => {
+            // argument observer is the 'graphqlSubscriptionObserver'
+            console.log('apollo link got graphql subscribe request: ',{ ...operation, query: print(operation.query)});
+
+            console.log('wire pubnub to apollo link');
+            pubnub.addListener({
+                // function triggered when pub nub status change
+                // publish hard coded message on channel 'hello_world'
+                // should publish result of 'operation.query'
+                status: function (statusEvent) {
+                    if (statusEvent.category === "PNConnectedCategory") {
+                        publishSampleMessage();
+                    }
+                },
+                // function triggered when new event arrive.
+                message: function (messageEvent) {
+                    observer.next(messageEvent);
+                },
+                // function triggered when error happen
+                error: function (exception) {
+                    observer.error(exception)
+                },
+                presence: function (presenceEvent) {
+                    // handle presence
+                }
+            });
+
+        });
+    }
+}
 
 
 const client = new ApolloClient({
-  link: wsLink,
-  cache: new InMemoryCache()
+    link: new PubnubLink({}),
+    cache: new InMemoryCache()
 });
 
 
+let graphqlSubscriptionObserver = {
+    start: function (subscription) {
+        console.log("in observer start");
+        console.log(subscription);
+    },
+    next: function (result) {
+        console.log("in observer next");
+        console.log(result);
+    },
+    error: function (errorValue) {
+        console.log("in observer error");
+        console.log(errorValue);
+    },
+    complete: function () {
+        console.log("in subscriber complete");
+    }
+};
 
+console.log("fire graphql subscription");
 client
-  .subscribe({
+.subscribe({
     query: gql`
-      subscription {
-        newPeopleAdded {id name}
-      }
+        subscription {
+            newPeopleAdded {id name}
+        }
     `
   })
-  .subscribe(result => console.log(result));
+  .subscribe(graphqlSubscriptionObserver);
+
+
+console.log("init pubnub subscription ");
+pubnub.subscribe({
+    channels: ["hello_world"]
+});
 
 ReactDOM.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-  document.getElementById('root')
+    <React.StrictMode>
+        <App/>
+    </React.StrictMode>,
+    document.getElementById('root')
 );
 
 // If you want to start measuring performance in your app, pass a function
